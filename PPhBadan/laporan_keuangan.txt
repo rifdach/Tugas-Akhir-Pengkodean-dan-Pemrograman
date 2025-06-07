@@ -1,0 +1,86 @@
+WITH TransaksiBase AS (
+  SELECT
+    t.tahun,
+    t.pendapatan,
+    t.beban_operasional,
+    t.penyusutan,
+    t.skenario,
+    k.tax_rate,
+    CASE
+      WHEN t.tahun BETWEEN EXTRACT(YEAR FROM k.tax_holiday_awal) AND EXTRACT(YEAR FROM k.tax_holiday_akhir)
+      THEN 0
+      ELSE k.tax_rate
+    END AS effective_tax_rate
+  FROM
+    `your_project.your_dataset.transaksi_keuangan` t
+  JOIN
+    `your_project.your_dataset.kebijakan_fiskal` k
+  ON
+    t.tahun = k.tahun
+  WHERE
+    t.skenario = 'Normal'
+),
+
+SkenarioNormal AS (
+  SELECT
+    tahun,
+    pendapatan,
+    beban_operasional,
+    penyusutan,
+    'Normal' AS skenario,
+    pendapatan - beban_operasional AS laba_kotor,
+    (pendapatan - beban_operasional) - penyusutan AS laba_sebelum_pajak,
+    ((pendapatan - beban_operasional) - penyusutan) * (1 - effective_tax_rate) AS laba_bersih
+  FROM
+    TransaksiBase
+),
+
+SkenarioTaxHoliday AS (
+  SELECT
+    tahun,
+    pendapatan,
+    beban_operasional,
+    penyusutan * 0.8 AS penyusutan, -- Penyusutan dikurangi 20% untuk Tax Holiday
+    'Tax Holiday' AS skenario,
+    pendapatan - beban_operasional AS laba_kotor,
+    (pendapatan - beban_operasional) - (penyusutan * 0.8) AS laba_sebelum_pajak,
+    ((pendapatan - beban_operasional) - (penyusutan * 0.8)) * (1 - 0) AS laba_bersih -- Pajak 0% pada Tax Holiday
+  FROM
+    TransaksiBase
+),
+
+SkenarioPerbandinganDepresiasi AS (
+  SELECT
+    tahun,
+    pendapatan,
+    beban_operasional,
+    penyusutan * 0.9 AS penyusutan, -- Penyusutan 10% lebih rendah untuk metode alternatif
+    'Perbandingan metode depresiasi' AS skenario,
+    pendapatan - beban_operasional AS laba_kotor,
+    (pendapatan - beban_operasional) - (penyusutan * 0.9) AS laba_sebelum_pajak,
+    ((pendapatan - beban_operasional) - (penyusutan * 0.9)) * (1 - effective_tax_rate) AS laba_bersih
+  FROM
+    TransaksiBase
+),
+
+LaporanKeuangan AS (
+  SELECT * FROM SkenarioNormal
+  UNION ALL
+  SELECT * FROM SkenarioTaxHoliday
+  UNION ALL
+  SELECT * FROM SkenarioPerbandinganDepresiasi
+)
+
+SELECT
+  tahun,
+  skenario,
+  ROUND(pendapatan, 2) AS pendapatan,
+  ROUND(beban_operasional, 2) AS beban_operasional,
+  ROUND(penyusutan, 2) AS penyusutan,
+  ROUND(laba_kotor, 2) AS laba_kotor,
+  ROUND(laba_sebelum_pajak, 2) AS laba_sebelum_pajak,
+  ROUND(laba_bersih, 2) AS laba_bersih
+FROM
+  LaporanKeuangan
+ORDER BY
+  tahun, skenario;
